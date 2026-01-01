@@ -5,6 +5,7 @@ google-cloud-aiplatform>=1.70.0
 google-cloud-discoveryengine
 faster-whisper
 TTS
+transformers==4.33.0
 torch
 torchaudio
 numpy<2.0.0

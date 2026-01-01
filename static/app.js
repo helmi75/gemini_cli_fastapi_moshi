@@ -2,46 +2,58 @@ let socket;
 let audioContext;
 let processor;
 let microphone;
+let isRecording = false;
+
 const recordBtn = document.getElementById('recordBtn');
 const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
 const chatBox = document.getElementById('chatBox');
-const canvas = document.getElementById('visualizer');
-const canvasCtx = canvas.getContext('2d');
+const debugLog = document.getElementById('debugLog');
 
-// Initialize WebSocket
+function log(msg) {
+    console.log(msg);
+    const line = document.createElement('div');
+    line.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    debugLog.prepend(line);
+}
+
 function initWebSocket() {
-    // If hosted on a server, we use the current host and the correct protocol
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws`;
-    console.log("Connecting to WebSocket:", wsUrl);
+    log(`Connexion WebSocket vers: ${wsUrl}`);
     
     socket = new WebSocket(wsUrl);
     socket.binaryType = 'arraybuffer';
 
     socket.onopen = () => {
-        statusDot.classList.add('status-connected');
-        statusText.innerText = 'Connecté';
+        statusDot.className = 'status-dot status-connected';
+        statusText.innerText = 'Connecté (Prêt)';
+        log("WebSocket ouvert avec succès");
     };
 
-    socket.onclose = () => {
-        statusDot.classList.remove('status-connected');
+    socket.onclose = (e) => {
+        statusDot.className = 'status-dot';
         statusText.innerText = 'Déconnecté';
-        setTimeout(initWebSocket, 2000);
+        log(`WebSocket fermé: ${e.code} ${e.reason}`);
+        setTimeout(initWebSocket, 3000);
     };
 
-    socket.onmessage = async (event) => {
+    socket.onerror = (err) => {
+        log(`Erreur WebSocket détectée`);
+    };
+
+    socket.onmessage = (event) => {
         if (typeof event.data === 'string') {
             const data = JSON.parse(event.data);
             handleTextMessage(data);
         } else {
-            // It's binary audio data (PCM float32 24000Hz from XTTS)
             playAudioBuffer(event.data);
         }
     };
 }
 
 function handleTextMessage(data) {
+    log(`Message reçu: ${data.type}`);
     const div = document.createElement('div');
     div.className = 'msg ' + (data.type === 'transcription' ? 'user-msg' : 'ai-msg');
     div.innerText = (data.type === 'transcription' ? 'Vous: ' : 'IA: ') + data.text;
@@ -49,43 +61,27 @@ function handleTextMessage(data) {
     chatBox.scrollTop = chatBox.scrollHeight;
 }
 
-// Audio Playback
-let nextStartTime = 0;
 function playAudioBuffer(arrayBuffer) {
     if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    
-    // The backend sends float32 PCM at 24000Hz (XTTS default)
     const float32Data = new Float32Array(arrayBuffer);
     const audioBuffer = audioContext.createBuffer(1, float32Data.length, 24000);
     audioBuffer.getChannelData(0).set(float32Data);
-
     const source = audioContext.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(audioContext.destination);
-
-    // Precise scheduling for gapless playback
-    const currentTime = audioContext.currentTime;
-    if (nextStartTime < currentTime) {
-        nextStartTime = currentTime;
-    }
-    source.start(nextStartTime);
-    nextStartTime += audioBuffer.duration;
+    source.start();
 }
 
-// Audio Recording
 async function startRecording() {
-    if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioContext.state === 'suspended') {
-        await audioContext.resume();
-    }
-    
+    log("Demande d'accès micro...");
     try {
+        if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioContext.state === 'suspended') await audioContext.resume();
+
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        microphone = audioContext.createMediaStreamSource(stream);
+        log("Micro accessible");
         
-        // We need 16000Hz for Whisper usually. 
-        // We'll use a ScriptProcessor (deprecated but simple for prototype) 
-        // or AudioWorklet for better performance.
+        microphone = audioContext.createMediaStreamSource(stream);
         processor = audioContext.createScriptProcessor(4096, 1, 1);
         
         microphone.connect(processor);
@@ -94,52 +90,46 @@ async function startRecording() {
         processor.onaudioprocess = (e) => {
             if (socket && socket.readyState === WebSocket.OPEN) {
                 const inputData = e.inputBuffer.getChannelData(0);
-                // Downsample to 16kHz if needed, here we just convert to Int16
-                const int16Data = convertFloat32ToInt16(inputData);
+                const int16Data = new Int16Array(inputData.length);
+                for (let i = 0; i < inputData.length; i++) {
+                    int16Data[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
+                }
                 socket.send(int16Data.buffer);
             }
-            visualize(e.inputBuffer.getChannelData(0));
         };
         
         recordBtn.classList.replace('btn-primary', 'btn-danger');
+        recordBtn.innerText = '⏹';
+        isRecording = true;
+        log("Enregistrement en cours...");
     } catch (err) {
-        console.error('Error accessing microphone:', err);
+        log(`ERREUR MICRO: ${err.message}`);
+        alert(`Micro bloqué : ${err.message}. Vérifiez les permissions (icône cadenas).`);
     }
 }
 
 function stopRecording() {
+    log("Arrêt de l'enregistrement");
+    if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ "type": "end_of_speech" }));
+    }
     if (processor) {
         processor.disconnect();
         microphone.disconnect();
     }
     recordBtn.classList.replace('btn-danger', 'btn-primary');
+    recordBtn.innerText = '🎤';
+    isRecording = false;
 }
 
-function convertFloat32ToInt16(buffer) {
-    let l = buffer.length;
-    let buf = new Int16Array(l);
-    while (l--) {
-        buf[l] = Math.min(1, buffer[l]) * 0x7FFF;
+recordBtn.onclick = () => {
+    log(`Clic bouton (isRecording=${isRecording})`);
+    if (!isRecording) {
+        startRecording();
+    } else {
+        stopRecording();
     }
-    return buf;
-}
+};
 
-// Visualizer
-function visualize(data) {
-    canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
-    canvasCtx.fillStyle = '#4caf50';
-    const barWidth = (canvas.width / data.length) * 2.5;
-    let x = 0;
-    for (let i = 0; i < data.length; i++) {
-        const barHeight = Math.abs(data[i]) * canvas.height * 2;
-        canvasCtx.fillRect(x, canvas.height / 2 - barHeight / 2, barWidth, barHeight);
-        x += barWidth + 1;
-    }
-}
-
-recordBtn.onmousedown = startRecording;
-recordBtn.onmouseup = stopRecording;
-recordBtn.ontouchstart = (e) => { e.preventDefault(); startRecording(); };
-recordBtn.ontouchend = (e) => { e.preventDefault(); stopRecording(); };
-
+// Initialisation
 initWebSocket();

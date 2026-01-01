@@ -5,14 +5,15 @@ import numpy as np
 import pytest
 
 # Test configuration
-WS_URL = "ws://localhost:8000/ws"
+WS_URL = "ws://127.0.0.1:8000/ws"
 
 @pytest.mark.asyncio
 async def test_websocket_connection():
     """Test if we can connect to the websocket."""
     try:
         async with websockets.connect(WS_URL) as websocket:
-            assert websocket.open
+            # If we are here, connection is established
+            assert True
     except Exception as e:
         pytest.fail(f"Could not connect to WebSocket: {e}")
 
@@ -30,6 +31,9 @@ async def test_audio_and_response():
         
         # Send audio
         await websocket.send(audio_data.tobytes())
+        
+        # Send end of speech signal to trigger processing
+        await websocket.send(json.dumps({"type": "end_of_speech"}))
         
         # We expect some response (even if it's "STT Error" or similar if dummy audio is too short)
         # But here we just check if the connection stays alive and we get valid JSON

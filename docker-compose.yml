@@ -2,7 +2,7 @@ services:
   assistant-backend:
     build: .
     ports:
-      - "8000:8000"
+      - "8998:8000"
     volumes:
       - ./secrets:/app/secrets
       - ./static:/app/static

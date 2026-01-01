@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.1.0-base-ubuntu22.04
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 
 # Avoid interactive prompts during apt-get
 ENV DEBIAN_FRONTEND=noninteractive
@@ -29,7 +29,7 @@ RUN ln -sf /usr/bin/python3.11 /usr/bin/python3 && \
 # Install dependencies
 COPY requirements.txt .
 RUN python3.11 -m pip install --no-cache-dir --upgrade pip setuptools wheel
-RUN python3.11 -m pip install --no-cache-dir -r requirements.txt
+RUN python3.11 -m pip install --no-cache-dir --ignore-installed -r requirements.txt
 
 # Copy the rest of the application
 COPY . .

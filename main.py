@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import json
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -22,21 +23,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Lazy loading to avoid delay on startup if GPU models take time
+# Global instances for models
 engine = None
 rag_service = None
 
-def get_engine():
-    global engine
-    if engine is None:
-        engine = AudioEngine()
-    return engine
-
-def get_rag_service():
-    global rag_service
-    if rag_service is None:
-        rag_service = VertexRAGService()
-    return rag_service
+@app.on_event("startup")
+async def startup_event():
+    global engine, rag_service
+    logger.info("Starting up: Loading models...")
+    loop = asyncio.get_running_loop()
+    # Initialize models in threads to keep the loop responsive
+    engine = await loop.run_in_executor(None, AudioEngine)
+    rag_service = await loop.run_in_executor(None, VertexRAGService)
+    logger.info("Models loaded successfully.")
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -49,46 +48,83 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     logger.info("Client connected via WebSocket")
     
-    # Initialize services
-    eng = get_engine()
-    rag = get_rag_service()
+    audio_buffer = bytearray()
+    history = []
     
     try:
         while True:
-            # 1. Receive Binary Audio Chunk (PCM 16-bit)
-            audio_chunk = await websocket.receive_bytes()
+            # Receive any message (bytes or text)
+            # We use the generic receive() but handle the disconnect type explicitly
+            message = await websocket.receive()
             
-            # 2. STT (Whisper) - Default to 44.1kHz if unknown, browser usually provides this
-            # In a production app, we might send the sample rate in a header or first packet
-            text_input = eng.speech_to_text(audio_chunk, input_sr=44100)
-            
-            if not text_input or len(text_input) < 2:
-                continue
+            if message["type"] == "websocket.disconnect":
+                logger.info("Client sent disconnect message")
+                break
+
+            if "bytes" in message:
+                audio_buffer.extend(message["bytes"])
                 
-            logger.info(f"User: {text_input}")
-            
-            # Send the transcribed text back to UI for feedback
-            await websocket.send_json({"type": "transcription", "text": text_input})
-            
-            # 3. RAG + LLM (Vertex AI)
-            response_text = await rag.query(text_input)
-            logger.info(f"Assistant: {response_text}")
-            
-            # Send the response text back to UI
-            await websocket.send_json({"type": "response_text", "text": response_text})
-            
-            # 4. TTS (Local GPU) + Streaming Back
-            # We send audio in a specific format (e.g., float32 PCM at 24000Hz)
-            for audio_pcm in eng.text_to_speech_stream(response_text):
-                await websocket.send_bytes(audio_pcm)
-                
+            elif "text" in message:
+                try:
+                    data = json.loads(message["text"])
+                except json.JSONDecodeError:
+                    continue
+
+                if data.get("type") == "end_of_speech":
+                    if len(audio_buffer) == 0:
+                        continue
+                        
+                    logger.info(f"Processing audio buffer: {len(audio_buffer)} bytes")
+                    current_audio = bytes(audio_buffer)
+                    audio_buffer = bytearray() # Reset buffer
+                    
+                    # 1. STT
+                    text_input = await asyncio.to_thread(engine.speech_to_text, current_audio, 44100)
+                    
+                    if not text_input or len(text_input) < 2:
+                        logger.info("No speech detected.")
+                        continue
+                        
+                    logger.info(f"User: {text_input}")
+                    await websocket.send_json({"type": "transcription", "text": text_input})
+                    
+                    # 2. RAG + LLM
+                    response_text = await asyncio.to_thread(rag_service.query, text_input, history)
+                    logger.info(f"Assistant: {response_text}")
+                    
+                    history.append(f"Utilisateur: {text_input}")
+                    history.append(f"Assistant: {response_text}")
+                    if len(history) > 10: history = history[-10:]
+                        
+                    await websocket.send_json({"type": "response_text", "text": response_text})
+                    
+                    # 3. TTS (if available)
+                    if engine.tts:
+                        try:
+                            for audio_pcm in engine.text_to_speech_stream(response_text):
+                                await websocket.send_bytes(audio_pcm)
+                                await asyncio.sleep(0.01)
+                        except Exception as e:
+                            logger.error(f"TTS Error: {e}")
+
     except WebSocketDisconnect:
-        logger.info("Client disconnected")
+        logger.info("WebSocket disconnected normally")
     except Exception as e:
         logger.error(f"Error in websocket loop: {e}")
-        await websocket.close()
+    finally:
+        try:
+            await websocket.close()
+        except:
+            pass
 
 if __name__ == "__main__":
     import uvicorn
-    # Use 0.0.0.0 for docker compatibility
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    ssl_key_path = "secrets/ssl_key.pem"
+    ssl_cert_path = "secrets/ssl_cert.pem"
+    
+    if os.path.exists(ssl_key_path) and os.path.exists(ssl_cert_path):
+        logger.info("Starting in HTTPS mode")
+        uvicorn.run(app, host="0.0.0.0", port=8000, ssl_keyfile=ssl_key_path, ssl_certfile=ssl_cert_path)
+    else:
+        logger.info("Starting in HTTP mode")
+        uvicorn.run(app, host="0.0.0.0", port=8000)

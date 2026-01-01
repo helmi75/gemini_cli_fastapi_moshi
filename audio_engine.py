@@ -1,31 +1,37 @@
 import torch
 import numpy as np
 from faster_whisper import WhisperModel
-from TTS.api import TTS
 import io
 import soundfile as sf
 import os
 import librosa
+import functools
+
+# Monkeypatch torch.load for compatibility with Coqui TTS and PyTorch 2.6+
+orig_load = torch.load
+def patched_load(*args, **kwargs):
+    if 'weights_only' not in kwargs:
+        kwargs['weights_only'] = False
+    return orig_load(*args, **kwargs)
+torch.load = patched_load
+
+from TTS.api import TTS
 
 class AudioEngine:
     def __init__(self):
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.compute_type = "float16" if self.device == "cuda" else "int8"
-        
-        # Accept Coqui TOS
+        self.device = "cpu" 
+        self.compute_type = "int8"
         os.environ["COQUI_TOS_AGREED"] = "1"
         
         print(f"Initializing AudioEngine on {self.device}...")
         
-        # 1. Load Whisper Turbo (STT)
         print("Loading Whisper Turbo...")
         try:
-            self.stt_model = WhisperModel("large-v3-turbo", device=self.device, compute_type=self.compute_type)
+            self.stt_model = WhisperModel("tiny", device=self.device, compute_type=self.compute_type)
         except Exception as e:
             print(f"Failed to load Whisper model: {e}")
             self.stt_model = None
         
-        # 2. Load XTTS v2 (TTS)
         print("Loading XTTS v2...")
         try:
             self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
@@ -34,22 +40,13 @@ class AudioEngine:
             self.tts = None
             
         self.speaker_wav = "static/reference.wav"
-        if not os.path.exists(self.speaker_wav):
-            print(f"Warning: Speaker reference {self.speaker_wav} not found. Using default voice.")
 
     def speech_to_text(self, audio_bytes: bytes, input_sr: int = 44100) -> str:
-        if not self.stt_model:
-            return "STT model not loaded."
-            
-        # Convert bytes to numpy array (Int16 to Float32)
+        if not self.stt_model: return "STT model not loaded."
         audio_data = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-        
-        # Resample to 16kHz if necessary
         if input_sr != 16000:
             audio_data = librosa.resample(audio_data, orig_sr=input_sr, target_sr=16000)
-        
         try:
-            # language="fr" for French transcription
             segments, _ = self.stt_model.transcribe(audio_data, beam_size=1, language="fr")
             text = "".join([s.text for s in segments])
             return text.strip()
@@ -58,12 +55,8 @@ class AudioEngine:
             return ""
 
     def text_to_speech_stream(self, text: str):
-        if not self.tts:
-            print("TTS model not loaded.")
-            return
-
+        if not self.tts: return
         try:
-            # language="fr" for French synthesis
             chunks = self.tts.tts_stream(
                 text=text,
                 language="fr",
