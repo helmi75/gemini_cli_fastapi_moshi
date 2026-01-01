@@ -1,0 +1,20 @@
+services:
+  assistant-backend:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./secrets:/app/secrets
+      - ./static:/app/static
+      - ~/.cache/huggingface:/root/.cache/huggingface # Cache models on host
+    environment:
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - VERTEX_DATA_STORE_ID=${VERTEX_DATA_STORE_ID}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/key.json
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+websockets
+google-cloud-aiplatform
+google-cloud-discoveryengine
+vertexai
+faster-whisper
+TTS
+torch
+torchaudio
+numpy
+python-multipart
+soundfile
+librosa
+scipy
+pytest
+pytest-asyncio

@@ -1,0 +1,24 @@
+# Environments
+.env
+secrets/key.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# AI Models & Cache
+.cache/
+*.pt
+*.pth
+*.bin
+
+# Audio temporary files
+*.wav
+*.mp3
+!static/reference.wav
+
+# OS
+.DS_Store
