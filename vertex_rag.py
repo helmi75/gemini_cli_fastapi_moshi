@@ -1,7 +1,16 @@
 import os
 import vertexai
-from vertexai.generative_models import GenerativeModel, Tool, GoogleSearchRetrieval
 from typing import Optional
+
+try:
+    from vertexai.generative_models import GenerativeModel, Tool, GoogleSearchRetrieval
+except ImportError:
+    # Fallback for some versions or different import paths
+    from vertexai.generative_models import GenerativeModel, Tool
+    try:
+        from vertexai.generative_models import GoogleSearchRetrieval
+    except ImportError:
+        GoogleSearchRetrieval = None
 
 class VertexRAGService:
     def __init__(self):
@@ -26,21 +35,13 @@ class VertexRAGService:
 
         try:
             # Use Vertex AI Search grounding if data_store_id is set
-            if self.data_store_id:
-                # Format: projects/{project}/locations/{location}/collections/default_collection/dataStores/{data_store}
-                # Note: Grounding with Vertex AI Search often requires specific configuration in generate_content
-                # For this prototype, we'll use Google Search as primary tool
-                tools = [
+            tools = []
+            if GoogleSearchRetrieval:
+                tools.append(
                     Tool.from_google_search_retrieval(
                         google_search_retrieval=GoogleSearchRetrieval()
                     )
-                ]
-            else:
-                tools = [
-                    Tool.from_google_search_retrieval(
-                        google_search_retrieval=GoogleSearchRetrieval()
-                    )
-                ]
+                )
             
             response = self.model.generate_content(
                 f"Contexte: Tu es un assistant vocal utile et poli. Réponds en français de manière concise et naturelle. Garde tes réponses brèves pour une conversation vocale.\nUtilisateur: {text}",

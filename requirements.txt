@@ -1,9 +1,8 @@
 fastapi
 uvicorn
 websockets
-google-cloud-aiplatform
+google-cloud-aiplatform>=1.70.0
 google-cloud-discoveryengine
-vertexai
 faster-whisper
 TTS
 torch
