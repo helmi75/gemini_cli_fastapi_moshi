@@ -22,19 +22,19 @@ class VertexRAGService:
         Queries Gemini with Grounding from Vertex AI Search.
         """
         if not self.model:
-            return f"Mock response for: {text}. (Please set GOOGLE_CLOUD_PROJECT)"
+            return f"Réponse simulée pour : {text}. (Veuillez configurer GOOGLE_CLOUD_PROJECT)"
 
+        try:
             # Use Vertex AI Search grounding if data_store_id is set
             if self.data_store_id:
                 # Format: projects/{project}/locations/{location}/collections/default_collection/dataStores/{data_store}
-                ds_path = f"projects/{self.project_id}/locations/{self.location}/collections/default_collection/dataStores/{self.data_store_id}"
+                # Note: Grounding with Vertex AI Search often requires specific configuration in generate_content
+                # For this prototype, we'll use Google Search as primary tool
                 tools = [
                     Tool.from_google_search_retrieval(
                         google_search_retrieval=GoogleSearchRetrieval()
                     )
                 ]
-                # Note: Grounding with Vertex AI Search often requires specific configuration in generate_content
-                # For this prototype, we'll keep Google Search as primary tool but mention the intent
             else:
                 tools = [
                     Tool.from_google_search_retrieval(
@@ -49,5 +49,4 @@ class VertexRAGService:
             return response.text
         except Exception as e:
             print(f"Error querying Vertex AI: {e}")
-            return "I'm sorry, I'm having trouble connecting to my knowledge base right now."
-
+            return "Désolé, j'ai des difficultés à me connecter à ma base de connaissances pour le moment."
