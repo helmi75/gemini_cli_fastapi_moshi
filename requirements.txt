@@ -8,7 +8,7 @@ faster-whisper
 TTS
 torch
 torchaudio
-numpy
+numpy<2.0.0
 python-multipart
 soundfile
 librosa

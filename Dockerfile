@@ -16,6 +16,7 @@ WORKDIR /app
 
 # Install dependencies first for caching
 COPY requirements.txt .
+RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel
 RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application
